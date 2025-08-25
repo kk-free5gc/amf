@@ -14,6 +14,7 @@ import (
 	"github.com/free5gc/amf/internal/logger"
 	amf_nas "github.com/free5gc/amf/internal/nas"
 	ngap_message "github.com/free5gc/amf/internal/ngap/message"
+	"github.com/free5gc/amf/internal/policy"
 	"github.com/free5gc/ngap/ngapType"
 	"github.com/free5gc/openapi/models"
 )
@@ -326,4 +327,103 @@ func (p *Processor) N1MessageNotifyProcedure(n1MessageNotify models.N1MessageNot
 		amf_nas.HandleNAS(ranUe, ngapType.ProcedureCodeInitialUEMessage, n1MessageNotify.BinaryDataN1Message, true)
 	}()
 	return nil
+}
+
+func (p *Processor) HandleUePolicyControlUpdateNotify(c *gin.Context,
+	policyUpdate models.PcfUePolicyControlPolicyUpdate,
+) {
+	logger.ProducerLog.Info("WNC: Handle UE Policy Control Update Notify [Policy update notification]")
+
+	uePolicyAssociationId := c.Param("uePolicyAssociationId")
+	problemDetails := p.UePolicyControlUpdateNotifyProcedure(uePolicyAssociationId, policyUpdate)
+
+	if problemDetails != nil {
+		c.JSON(int(problemDetails.Status), problemDetails)
+	} else {
+		c.Status(http.StatusNoContent)
+	}
+}
+
+func (p *Processor) UePolicyControlUpdateNotifyProcedure(uePolicyAssociationId string,
+	policyUpdate models.PcfUePolicyControlPolicyUpdate,
+) *models.ProblemDetails {
+	logger.ProducerLog.Infof("WNC: Processing UE Policy Update for Association ID: %s", uePolicyAssociationId)
+	
+	amfSelf := context.GetSelf()
+
+	ue, ok := amfSelf.AmfUeFindByUePolicyAssociationID(uePolicyAssociationId)
+	if !ok {
+		problemDetails := &models.ProblemDetails{
+			Status: http.StatusNotFound,
+			Cause:  "CONTEXT_NOT_FOUND",
+			Detail: fmt.Sprintf("UE Policy Association ID[%s] Not Found", uePolicyAssociationId),
+		}
+		logger.ProducerLog.Errorf("WNC: %s", problemDetails.Detail)
+		return problemDetails
+	}
+
+	ue.Lock.Lock()
+	defer ue.Lock.Unlock()
+
+	logger.ProducerLog.Infof("WNC: Found UE %s for policy update", ue.Supi)
+
+	// Update UE Policy Association with received policy information
+	if policyUpdate.UePolicy != "" {
+		ue.UePolicyAssociation.UePolicy = policyUpdate.UePolicy
+		logger.ProducerLog.Infof("WNC: Updated UE Policy for UE %s", ue.Supi)
+	}
+
+	// Use goroutine to send policy to UE without blocking HTTP response
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.CallbackLog.Fatalf("WNC: panic in UE policy delivery: %v\n%s", r, string(debug.Stack()))
+			}
+		}()
+
+		p.SendUEPolicyToUE(ue, policyUpdate)
+	}()
+
+	return nil
+}
+
+func (p *Processor) SendUEPolicyToUE(ue *context.AmfUe, policyUpdate models.PcfUePolicyControlPolicyUpdate) {
+	logger.ProducerLog.Infof("WNC: Sending UE Policy to UE %s", ue.Supi)
+
+	// Check if UE is CM-Connected
+	if !ue.CmConnect(models.AccessType__3_GPP_ACCESS) {
+		logger.ProducerLog.Warnf("WNC: UE %s is not CM-Connected, cannot send policy", ue.Supi)
+		return
+	}
+
+	ranUe := ue.RanUe[models.AccessType__3_GPP_ACCESS]
+	if ranUe == nil {
+		logger.ProducerLog.Errorf("WNC: RanUe is nil for UE %s", ue.Supi)
+		return
+	}
+
+	// Load default policy configuration or use received policy
+	var policyConfig *policy.UEPolicyConfig
+	var err error
+	
+	if policyUpdate.UePolicy != "" {
+		// TODO: Convert PCF policy to internal format
+		logger.ProducerLog.Info("WNC: Using policy from PCF (conversion not yet implemented)")
+		// For now, fall back to default policy
+	}
+	
+	// Load default policy configuration
+	configPath := "./config/pcfcfg_ue_policy_wnc.yaml"
+	policyConfig, err = policy.LoadUEPolicyConfigFromYAML(configPath)
+	if err != nil {
+		logger.ProducerLog.Errorf("WNC: Failed to load UE policy config: %v", err)
+		logger.ProducerLog.Info("WNC: Falling back to QXDM config")
+		policyConfig = &policy.QXDMPolicyConfig
+	} else {
+		logger.ProducerLog.Info("WNC: Successfully loaded UE policy config from YAML")
+	}
+
+	// Send the policy command to UE
+	gmm_message.SendManageUEPolicyCommand(ranUe, policyConfig)
+	logger.ProducerLog.Infof("WNC: UE Policy delivered to UE %s", ue.Supi)
 }

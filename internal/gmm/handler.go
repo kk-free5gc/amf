@@ -20,6 +20,7 @@ import (
 	gmm_message "github.com/free5gc/amf/internal/gmm/message"
 	"github.com/free5gc/amf/internal/logger"
 	ngap_message "github.com/free5gc/amf/internal/ngap/message"
+	"github.com/free5gc/amf/internal/policy"
 	"github.com/free5gc/amf/internal/sbi/consumer"
 	callback "github.com/free5gc/amf/internal/sbi/processor/notifier"
 	"github.com/free5gc/amf/internal/util"
@@ -770,7 +771,57 @@ func HandleInitialRegistration(ue *context.AmfUe, anType models.AccessType) erro
 	}
 
 	gmm_message.SendRegistrationAccept(ue, anType, nil, nil, nil, nil, nil)
+
+	// Create UE Policy Association with PCF after registration
+	problemDetails, err = consumer.GetConsumer().UEPolicyControlCreate(ue, anType)
+	if problemDetails != nil {
+		ue.GmmLog.Errorf("WNC: UE Policy Control Create Failed Problem[%+v]", problemDetails)
+	} else if err != nil {
+		ue.GmmLog.Errorf("WNC: UE Policy Control Create Error[%+v]", err)
+	}
+
 	return nil
+}
+
+func TriggerUEPolicyDelivery(amfUe *context.AmfUe, anType models.AccessType) {
+	logger.GmmLog.Info("WNC: Triggering UE Policy Delivery")
+
+	if amfUe == nil {
+		logger.GmmLog.Error("WNC: TriggerUEPolicyDelivery: AmfUe is nil")
+		return
+	}
+
+	if amfUe.RanUe[anType] == nil {
+		logger.GmmLog.Error("WNC: TriggerUEPolicyDelivery: RanUe is nil")
+		return
+	}
+
+	ranUe := amfUe.RanUe[anType]
+
+	// Use goroutine to prevent blocking registration process
+	go func() {
+		// Small delay to ensure registration is complete
+		time.Sleep(100 * time.Millisecond)
+
+		logger.GmmLog.Info("WNC: Starting UE Policy Association Request")
+
+		// Load UE policy configuration from YAML file
+		configPath := "./config/pcfcfg_ue_policy_wnc.yaml"
+		policyConfig, err := policy.LoadUEPolicyConfigFromYAML(configPath)
+		if err != nil {
+			logger.GmmLog.Errorf("WNC: Failed to load UE policy config: %v", err)
+			logger.GmmLog.Info("WNC: Falling back to QXDM config")
+			// Fallback to QXDM config
+			policyConfig = &policy.QXDMPolicyConfig
+		} else {
+			logger.GmmLog.Info("WNC: Successfully loaded UE policy config from YAML")
+		}
+
+		// Send the policy command
+		gmm_message.SendManageUEPolicyCommand(ranUe, policyConfig)
+
+		logger.GmmLog.Info("WNC: UE Policy Delivery completed")
+	}()
 }
 
 func HandleMobilityAndPeriodicRegistrationUpdating(ue *context.AmfUe, anType models.AccessType) error {
@@ -889,6 +940,9 @@ func HandleMobilityAndPeriodicRegistrationUpdating(ue *context.AmfUe, anType mod
 			gmm_message.SendRegistrationAccept(ue, anType, pduSessionStatus,
 				reactivationResult, errPduSessionId, errCause, &cxtList)
 
+			// Trigger UE Policy Delivery after registration
+			TriggerUEPolicyDelivery(ue, anType)
+
 			switch requestData.N1MessageContainer.N1MessageClass {
 			case models.N1MessageClass_SM:
 				gmm_message.SendDLNASTransport(ue.RanUe[anType], nasMessage.PayloadContainerTypeN1SMInfo,
@@ -948,6 +1002,10 @@ func HandleMobilityAndPeriodicRegistrationUpdating(ue *context.AmfUe, anType mod
 
 	gmm_message.SendRegistrationAccept(ue, anType, pduSessionStatus, reactivationResult,
 		errPduSessionId, errCause, &cxtList)
+
+	// Trigger UE Policy Delivery after registration
+	TriggerUEPolicyDelivery(ue, anType)
+
 	return nil
 }
 

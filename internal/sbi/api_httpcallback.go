@@ -33,6 +33,12 @@ func (s *Server) getHttpCallBackRoutes() []Route {
 			APIFunc: s.HTTPAmPolicyControlUpdateNotifyTerminate,
 		},
 		{
+			Name:    "UePolicyControlUpdateNotify",
+			Method:  http.MethodPost,
+			Pattern: "/ue-policy/:uePolicyAssociationId",
+			APIFunc: s.HTTPUePolicyControlUpdateNotify,
+		},
+		{
 			Name:    "SmContextStatusNotify",
 			Method:  http.MethodPost,
 			Pattern: "/smContextStatus/:supi/:pduSessionId",
@@ -276,4 +282,37 @@ func (s *Server) DeregistrationNotificationProcedure(ue *amf_context.AmfUe, dere
 	ue.Remove()
 
 	return nil, nil
+}
+
+func (s *Server) HTTPUePolicyControlUpdateNotify(c *gin.Context) {
+	logger.CallbackLog.Info("WNC: Handle UE Policy Control Update Notify")
+	
+	var policyUpdate models.PcfUePolicyControlPolicyUpdate
+
+	requestBody, err := c.GetRawData()
+	if err != nil {
+		logger.CallbackLog.Errorf("WNC: Get Request Body error: %+v", err)
+		problemDetail := models.ProblemDetails{
+			Title:  "System failure",
+			Status: http.StatusInternalServerError,
+			Detail: err.Error(),
+			Cause:  "SYSTEM_FAILURE",
+		}
+		c.JSON(http.StatusInternalServerError, problemDetail)
+		return
+	}
+
+	err = openapi.Deserialize(&policyUpdate, requestBody, "application/json")
+	if err != nil {
+		problemDetail := "[Request Body] " + err.Error()
+		rsp := models.ProblemDetails{
+			Title:  "Malformed request syntax",
+			Status: http.StatusBadRequest,
+			Detail: problemDetail,
+		}
+		logger.CallbackLog.Errorln("WNC: ", problemDetail)
+		c.JSON(http.StatusBadRequest, rsp)
+		return
+	}
+	s.Processor().HandleUePolicyControlUpdateNotify(c, policyUpdate)
 }

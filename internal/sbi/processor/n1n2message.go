@@ -3,6 +3,7 @@ package processor
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -118,6 +119,7 @@ func (p *Processor) N1N2MessageTransferProcedure(ueContextID string, reqUri stri
 		case models.N1MessageClass_LPP:
 			n1MsgType = nasMessage.PayloadContainerTypeLPP
 		case models.N1MessageClass_UPDP:
+			ue.ProducerLog.Infof("WNC: Receive UE Policy Container for transparent delivery to UE: %s", ue.Supi)
 			n1MsgType = nasMessage.PayloadContainerTypeUEPolicy
 		default:
 		}
@@ -165,6 +167,24 @@ func (p *Processor) N1N2MessageTransferProcedure(ueContextID string, reqUri stri
 		ue.StopT3513()
 		callback.SendN1N2TransferFailureNotification(ue, models.N1N2MessageTransferCause_UE_NOT_RESPONDING)
 	case context.OnGoingProcedureRegistration:
+		// Queue the message for FIFO processing after registration completes
+		queueItem := context.N1N2MessageQueueItem{
+			UeContextID:                ueContextID,
+			ReqUri:                     reqUri,
+			N1N2MessageTransferRequest: n1n2MessageTransferRequest,
+			Timestamp:                  time.Now(),
+			RetryCount:                 0,
+		}
+		
+		ue.N1N2MessageQueue.Enqueue(queueItem)
+		ue.ProducerLog.Infof("WNC: Queued N1N2 message for UE %s during registration (queue size: %d)", ue.Supi, ue.N1N2MessageQueue.Size())
+		
+		// Start queue processor if not already running (idempotent)
+		if ue.N1N2MessageQueue.Size() == 1 {
+			ue.ProducerLog.Infof("WNC: Starting N1N2 queue processor for UE %s", ue.Supi)
+			ue.StartN1N2QueueProcessor(p.N1N2MessageTransferProcedure)
+		}
+		
 		transferErr = new(models.N1N2MessageTransferError)
 		transferErr.Error = &models.ProblemDetails{
 			Status: http.StatusConflict,
@@ -201,6 +221,10 @@ func (p *Processor) N1N2MessageTransferProcedure(ueContextID string, reqUri stri
 			}
 			if n2Info == nil {
 				ue.ProducerLog.Debug("Forward N1 Message to UE")
+				// Add specific logging for UE policy transparent delivery
+				if n1MsgType == nasMessage.PayloadContainerTypeUEPolicy {
+					ue.ProducerLog.Infof("WNC: Forwarding UE Policy Container to CM-CONNECTED UE: %s", ue.Supi)
+				}
 				ngap_message.SendDownlinkNasTransport(ue.RanUe[anType], nasPdu, nil)
 				n1n2MessageTransferRspData = new(models.N1N2MessageTransferRspData)
 				n1n2MessageTransferRspData.Cause = models.N1N2MessageTransferCause_N1_N2_TRANSFER_INITIATED
@@ -301,6 +325,10 @@ func (p *Processor) N1N2MessageTransferProcedure(ueContextID string, reqUri stri
 			n1n2MessageTransferRspData.Cause = models.N1N2MessageTransferCause_N1_MSG_NOT_TRANSFERRED
 		} else {
 			n1n2MessageTransferRspData.Cause = models.N1N2MessageTransferCause_ATTEMPTING_TO_REACH_UE
+			// Add specific logging for UE policy transparent delivery via paging
+			if n1MsgType == nasMessage.PayloadContainerTypeUEPolicy {
+				ue.ProducerLog.Infof("WNC: Initiating paging for UE Policy Container delivery to CM-IDLE UE: %s", ue.Supi)
+			}
 			message := context.N1N2Message{
 				Request:     n1n2MessageTransferRequest,
 				Status:      n1n2MessageTransferRspData.Cause,

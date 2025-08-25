@@ -122,6 +122,10 @@ type AmfUe struct {
 	AmPolicyUri                  string
 	AmPolicyAssociation          *models.PcfAmPolicyControlPolicyAssociation
 	RequestTriggerLocationChange bool // true if AmPolicyAssociation.Trigger contains RequestTrigger_LOC_CH
+	/* UE Policy Control Association */
+	UePolicyAssociationId   string
+	UePolicyUri             string
+	UePolicyAssociation     *models.PcfUePolicyControlPolicyAssociation
 	/* UeContextForHandover */
 	HandoverNotifyUri string
 	/* N1N2Message */
@@ -130,6 +134,9 @@ type AmfUe struct {
 	N1N2MessageSubscribeIDGenerator *idgenerator.IDGenerator
 	// map[int64]models.UeN1N2InfoSubscriptionCreateData; use n1n2MessageSubscriptionID as key
 	N1N2MessageSubscription sync.Map
+	/* N1N2Message Queue for handling messages during registration */
+	N1N2MessageQueue       *N1N2MessageQueue
+	N1N2QueueProcessorStop chan bool
 	/* Pdu Sesseion context */
 	SmContextList sync.Map // map[int32]*SmContext, pdu session id as key
 	/* Related Context */
@@ -212,6 +219,115 @@ type N1N2Message struct {
 	ResourceUri string
 }
 
+// N1N2MessageQueueItem represents a queued N1N2 message during registration
+type N1N2MessageQueueItem struct {
+	UeContextID                string
+	ReqUri                     string
+	N1N2MessageTransferRequest models.N1N2MessageTransferRequest
+	Timestamp                  time.Time
+	RetryCount                 int
+}
+
+// N1N2MessageQueue represents a FIFO queue for N1N2 messages during registration
+type N1N2MessageQueue struct {
+	Items []N1N2MessageQueueItem
+	mutex sync.Mutex
+}
+
+// Enqueue adds a message to the queue (FIFO)
+func (q *N1N2MessageQueue) Enqueue(item N1N2MessageQueueItem) {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+	q.Items = append(q.Items, item)
+}
+
+// Dequeue removes and returns the first message from the queue (FIFO)
+func (q *N1N2MessageQueue) Dequeue() (N1N2MessageQueueItem, bool) {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+	if len(q.Items) == 0 {
+		return N1N2MessageQueueItem{}, false
+	}
+	item := q.Items[0]
+	q.Items = q.Items[1:]
+	return item, true
+}
+
+// IsEmpty checks if the queue is empty
+func (q *N1N2MessageQueue) IsEmpty() bool {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+	return len(q.Items) == 0
+}
+
+// Size returns the number of items in the queue
+func (q *N1N2MessageQueue) Size() int {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+	return len(q.Items)
+}
+
+// StartN1N2QueueProcessor starts the queue processor for handling queued messages
+func (ue *AmfUe) StartN1N2QueueProcessor(processor func(string, string, models.N1N2MessageTransferRequest) (*models.N1N2MessageTransferRspData, string, *models.ProblemDetails, *models.N1N2MessageTransferError)) {
+	go func() {
+		timeout := 30 * time.Second
+		startTime := time.Now()
+
+		for {
+			select {
+			case <-ue.N1N2QueueProcessorStop:
+				ue.GmmLog.Infof("WNC: N1N2 queue processor stopped for UE %s", ue.Supi)
+				return
+			default:
+				// Check if registration is complete
+				ue.Lock.Lock()
+				onGoing3GPP := ue.OnGoing(models.AccessType__3_GPP_ACCESS)
+				onGoingNon3GPP := ue.OnGoing(models.AccessType_NON_3_GPP_ACCESS)
+				
+				if onGoing3GPP.Procedure == OnGoingProcedureNothing && onGoingNon3GPP.Procedure == OnGoingProcedureNothing {
+					// Registration complete, process queued messages
+					for !ue.N1N2MessageQueue.IsEmpty() {
+						item, ok := ue.N1N2MessageQueue.Dequeue()
+						if !ok {
+							break
+						}
+						ue.GmmLog.Infof("WNC: Processing queued N1N2 message for UE %s (queued at %v)", ue.Supi, item.Timestamp)
+						ue.Lock.Unlock()
+						
+						// Process the queued message
+						_, _, _, _ = processor(item.UeContextID, item.ReqUri, item.N1N2MessageTransferRequest)
+						
+						ue.Lock.Lock()
+					}
+					ue.Lock.Unlock()
+					return
+				}
+				ue.Lock.Unlock()
+
+				// Check timeout
+				if time.Since(startTime) >= timeout {
+					ue.GmmLog.Warnf("WNC: Timeout waiting for registration completion for UE %s, discarding %d queued messages", ue.Supi, ue.N1N2MessageQueue.Size())
+					// Clear the queue
+					ue.N1N2MessageQueue.mutex.Lock()
+					ue.N1N2MessageQueue.Items = make([]N1N2MessageQueueItem, 0)
+					ue.N1N2MessageQueue.mutex.Unlock()
+					return
+				}
+
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+	}()
+}
+
+// StopN1N2QueueProcessor stops the queue processor
+func (ue *AmfUe) StopN1N2QueueProcessor() {
+	select {
+	case ue.N1N2QueueProcessorStop <- true:
+	default:
+	}
+}
+
 type OnGoing struct {
 	Procedure OnGoingProcedure
 	Ppi       int32 // Paging priority
@@ -275,6 +391,8 @@ func (ue *AmfUe) init() {
 	ue.AllowedNssai = make(map[models.AccessType][]models.AllowedSnssai)
 	ue.N1N2MessageIDGenerator = idgenerator.NewGenerator(1, 2147483647)
 	ue.N1N2MessageSubscribeIDGenerator = idgenerator.NewGenerator(1, 2147483647)
+	ue.N1N2MessageQueue = &N1N2MessageQueue{Items: make([]N1N2MessageQueueItem, 0)}
+	ue.N1N2QueueProcessorStop = make(chan bool, 1)
 	ue.onGoing = make(map[models.AccessType]*OnGoing)
 	ue.onGoing[models.AccessType_NON_3_GPP_ACCESS] = new(OnGoing)
 	ue.onGoing[models.AccessType_NON_3_GPP_ACCESS].Procedure = OnGoingProcedureNothing

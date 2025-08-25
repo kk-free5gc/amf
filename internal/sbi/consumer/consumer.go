@@ -8,6 +8,7 @@ import (
 	Nnrf_NFManagement "github.com/free5gc/openapi/nrf/NFManagement"
 	Nnssf_NSSelection "github.com/free5gc/openapi/nssf/NSSelection"
 	Npcf_AMPolicy "github.com/free5gc/openapi/pcf/AMPolicyControl"
+	Npcf_UEPolicy "github.com/free5gc/openapi/pcf/UEPolicyControl"
 	Nsmf_PDUSession "github.com/free5gc/openapi/smf/PDUSession"
 	Nudm_SubscriberDataManagement "github.com/free5gc/openapi/udm/SubscriberDataManagement"
 	Nudm_UEContextManagement "github.com/free5gc/openapi/udm/UEContextManagement"
@@ -55,6 +56,7 @@ func NewConsumer(amf ConsumerAmf) (*Consumer, error) {
 	c.npcfService = &npcfService{
 		consumer:        c,
 		AMPolicyClients: make(map[string]*Npcf_AMPolicy.APIClient),
+		UEPolicyClients: make(map[string]*Npcf_UEPolicy.APIClient),
 	}
 
 	c.nssfService = &nssfService{

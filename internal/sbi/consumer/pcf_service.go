@@ -10,6 +10,7 @@ import (
 	"github.com/free5gc/openapi"
 	"github.com/free5gc/openapi/models"
 	Npcf_AMPolicy "github.com/free5gc/openapi/pcf/AMPolicyControl"
+	Npcf_UEPolicy "github.com/free5gc/openapi/pcf/UEPolicyControl"
 )
 
 type npcfService struct {
@@ -18,6 +19,10 @@ type npcfService struct {
 	AMPolicyMu sync.RWMutex
 
 	AMPolicyClients map[string]*Npcf_AMPolicy.APIClient
+
+	UEPolicyMu sync.RWMutex
+
+	UEPolicyClients map[string]*Npcf_UEPolicy.APIClient
 }
 
 func (s *npcfService) getAMPolicyClient(uri string) *Npcf_AMPolicy.APIClient {
@@ -39,6 +44,28 @@ func (s *npcfService) getAMPolicyClient(uri string) *Npcf_AMPolicy.APIClient {
 	s.AMPolicyMu.Lock()
 	defer s.AMPolicyMu.Unlock()
 	s.AMPolicyClients[uri] = client
+	return client
+}
+
+func (s *npcfService) getUEPolicyClient(uri string) *Npcf_UEPolicy.APIClient {
+	if uri == "" {
+		return nil
+	}
+	s.UEPolicyMu.RLock()
+	client, ok := s.UEPolicyClients[uri]
+	if ok {
+		s.UEPolicyMu.RUnlock()
+		return client
+	}
+
+	configuration := Npcf_UEPolicy.NewConfiguration()
+	configuration.SetBasePath(uri)
+	client = Npcf_UEPolicy.NewAPIClient(configuration)
+
+	s.UEPolicyMu.RUnlock()
+	s.UEPolicyMu.Lock()
+	defer s.UEPolicyMu.Unlock()
+	s.UEPolicyClients[uri] = client
 	return client
 }
 
@@ -219,4 +246,76 @@ func (s *npcfService) AMPolicyControlDelete(ue *amf_context.AmfUe) (problemDetai
 		}
 	}
 	return nil, err
+}
+
+func (s *npcfService) UEPolicyControlCreate(
+	ue *amf_context.AmfUe, anType models.AccessType,
+) (*models.ProblemDetails, error) {
+	logger.ConsumerLog.Info("WNC: Starting UE Policy Control Create")
+	
+	client := s.getUEPolicyClient(ue.PcfUri)
+	if client == nil {
+		return nil, openapi.ReportError("pcf not found")
+	}
+	
+	amfSelf := amf_context.GetSelf()
+	ctx, _, err := amf_context.GetSelf().GetTokenCtx(models.ServiceName_NPCF_UE_POLICY_CONTROL,
+		models.NrfNfManagementNfType_PCF)
+	if err != nil {
+		return nil, err
+	}
+
+	policyAssociationRequest := models.PcfUePolicyControlPolicyAssociationRequest{
+		NotificationUri: amfSelf.GetIPv4Uri() + factory.AmfCallbackResUriPrefix + "/ue-policy/",
+		Supi:            ue.Supi,
+		Gpsi:            ue.Gpsi,
+		AccessType:      anType,
+		ServingPlmn: &models.PlmnIdNid{
+			Mcc: ue.PlmnId.Mcc,
+			Mnc: ue.PlmnId.Mnc,
+		},
+	}
+	
+	var policyAssociationreq Npcf_UEPolicy.CreateIndividualUEPolicyAssociationRequest
+	policyAssociationreq.SetPcfUePolicyControlPolicyAssociationRequest(policyAssociationRequest)
+
+	logger.ConsumerLog.Infof("WNC: Sending UE Policy Association Request for SUPI: %s", ue.Supi)
+	
+	res, localErr := client.UEPolicyAssociationsCollectionApi.
+		CreateIndividualUEPolicyAssociation(ctx, &policyAssociationreq)
+	if localErr == nil {
+		locationHeader := res.Location
+		logger.ConsumerLog.Debugf("WNC: UE Policy location header: %+v", locationHeader)
+		ue.UePolicyUri = locationHeader
+
+		re := regexp.MustCompile("/policies/.*")
+		match := re.FindStringSubmatch(locationHeader)
+		if len(match) > 0 {
+			ue.UePolicyAssociationId = match[0][10:]
+		}
+		ue.UePolicyAssociation = &res.PcfUePolicyControlPolicyAssociation
+
+		logger.ConsumerLog.Infof("WNC: UE Policy Association ID: %s", ue.UePolicyAssociationId)
+		logger.ConsumerLog.Debugf("WNC: UePolicyAssociation: %+v", ue.UePolicyAssociation)
+	} else {
+		logger.ConsumerLog.Errorf("WNC: UE Policy Control Create failed: %v", localErr)
+		switch apiErr := localErr.(type) {
+		case openapi.GenericOpenAPIError:
+			switch errorModel := apiErr.Model().(type) {
+			case Npcf_UEPolicy.CreateIndividualUEPolicyAssociationError:
+				return &errorModel.ProblemDetails, nil
+			case error:
+				return openapi.ProblemDetailsSystemFailure(errorModel.Error()), nil
+			default:
+				return nil, openapi.ReportError("openapi error")
+			}
+		case error:
+			return openapi.ProblemDetailsSystemFailure(apiErr.Error()), nil
+		default:
+			return nil, openapi.ReportError("openapi error")
+		}
+	}
+	
+	logger.ConsumerLog.Info("WNC: UE Policy Control Create completed successfully")
+	return nil, nil
 }

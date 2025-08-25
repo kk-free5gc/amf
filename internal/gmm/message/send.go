@@ -7,6 +7,7 @@ import (
 	gmm_common "github.com/free5gc/amf/internal/gmm/common"
 	"github.com/free5gc/amf/internal/logger"
 	ngap_message "github.com/free5gc/amf/internal/ngap/message"
+	"github.com/free5gc/amf/internal/policy"
 	callback "github.com/free5gc/amf/internal/sbi/processor/notifier"
 	"github.com/free5gc/nas/nasMessage"
 	"github.com/free5gc/ngap/ngapType"
@@ -507,4 +508,36 @@ func SendStatus5GMM(ue *context.RanUe, cause uint8) {
 		return
 	}
 	ngap_message.SendDownlinkNasTransport(ue, nasMsg, nil)
+}
+
+func SendManageUEPolicyCommand(ue *context.RanUe, policyConfig *policy.UEPolicyConfig) {
+	if ue == nil {
+		logger.GmmLog.Error("WNC: SendManageUEPolicyCommand: RanUe is nil")
+		return
+	}
+	if ue.AmfUe == nil {
+		logger.GmmLog.Error("WNC: SendManageUEPolicyCommand: AmfUe is nil")
+		return
+	}
+	amfUe := ue.AmfUe
+	amfUe.GmmLog.Info("WNC: Send Manage UE Policy Command")
+	
+	// Build the Manage UE Policy Command payload
+	policyPayload, err := policy.BuildManageUEPolicyCommand(policyConfig)
+	if err != nil {
+		amfUe.GmmLog.Errorf("WNC: Failed to build Manage UE Policy Command: %v", err)
+		return
+	}
+	
+	// Build DL NAS Transport with payload container type 5 (UE policy container)
+	nasMsg, err := BuildDLNASTransport(amfUe, ue.Ran.AnType, 5, policyPayload, 0, nil, nil, 0)
+	if err != nil {
+		amfUe.GmmLog.Errorf("WNC: Failed to build DL NAS Transport: %v", err)
+		return
+	}
+	
+	// Send via downlink NAS transport
+	ngap_message.SendDownlinkNasTransport(ue, nasMsg, nil)
+	
+	amfUe.GmmLog.Info("WNC: Manage UE Policy Command sent successfully")
 }

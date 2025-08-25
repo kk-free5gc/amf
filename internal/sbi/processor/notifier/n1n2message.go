@@ -25,6 +25,8 @@ func SendN1N2TransferFailureNotification(ue *amf_context.AmfUe, cause models.N1N
 	n1n2Message := ue.N1N2Message
 	uri := n1n2Message.Request.JsonData.N1n2FailureTxfNotifURI
 	if n1n2Message.Status == models.N1N2MessageTransferCause_ATTEMPTING_TO_REACH_UE && uri != "" {
+		// Add WNC logging for UE policy delivery failure notification
+		HttpLog.Infof("WNC: Sending N1N2TransferFailureNotification to PCF for UE: %s, cause: %s", ue.Supi, cause)
 		configuration := Namf_Communication.NewConfiguration()
 		client := Namf_Communication.NewAPIClient(configuration)
 
@@ -39,8 +41,9 @@ func SendN1N2TransferFailureNotification(ue *amf_context.AmfUe, cause models.N1N
 			N1N2TransferFailureNotification(context.Background(), uri, &n1N2MsgTxfrFailureNotificationReq)
 
 		if err != nil {
-			HttpLog.Errorln(err.Error())
+			HttpLog.Errorf("WNC: N1N2TransferFailureNotification failed for UE: %s, error: %v", ue.Supi, err)
 		} else {
+			HttpLog.Infof("WNC: N1N2TransferFailureNotification sent successfully for UE: %s", ue.Supi)
 			ue.N1N2Message = nil
 		}
 	}
@@ -49,6 +52,11 @@ func SendN1N2TransferFailureNotification(ue *amf_context.AmfUe, cause models.N1N
 func SendN1MessageNotify(ue *amf_context.AmfUe, n1class models.N1MessageClass, n1Msg []byte,
 	registerContext *models.RegistrationContextContainer,
 ) {
+	// Add WNC logging for UE policy response notification
+	if n1class == models.N1MessageClass_UPDP {
+		HttpLog.Infof("WNC: Sending UE Policy response notification to PCF for UE: %s", ue.Supi)
+	}
+	
 	ue.N1N2MessageSubscription.Range(func(key, value interface{}) bool {
 		subscriptionID := key.(int64)
 		subscription := value.(models.UeN1N2InfoSubscriptionCreateData)
@@ -76,7 +84,13 @@ func SendN1MessageNotify(ue *amf_context.AmfUe, n1class models.N1MessageClass, n
 			_, err := client.N1N2SubscriptionsCollectionForIndividualUEContextsCollectionApi.
 				N1MessageNotify(context.Background(), subscription.N1NotifyCallbackUri, &n1MessageNotifyReq)
 			if err != nil {
-				HttpLog.Errorln(err.Error())
+				if n1class == models.N1MessageClass_UPDP {
+					HttpLog.Errorf("WNC: UE Policy response notification failed for UE: %s, error: %v", ue.Supi, err)
+				} else {
+					HttpLog.Errorln(err.Error())
+				}
+			} else if n1class == models.N1MessageClass_UPDP {
+				HttpLog.Infof("WNC: UE Policy response notification sent successfully for UE: %s", ue.Supi)
 			}
 		}
 		return true
