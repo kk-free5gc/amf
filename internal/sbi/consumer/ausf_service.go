@@ -55,14 +55,40 @@ func (s *nausfService) SendUEAuthenticationAuthenticateRequest(ue *amf_context.A
 	}
 
 	amfSelf := amf_context.GetSelf()
-	servedGuami := amfSelf.ServedGuamiList[0]
+
+	// Find matching PLMN from servedGuamiList
+	var servedGuami models.Guami
+	found := false
+
+	logger.ConsumerLog.Infof("WNC: Starting PLMN matching for UE authentication - UE PLMN: MCC=%s, MNC=%s", ue.PlmnId.Mcc, ue.PlmnId.Mnc)
+	logger.ConsumerLog.Infof("WNC: Available servedGuamiList has %d entries", len(amfSelf.ServedGuamiList))
+
+	for i, guami := range amfSelf.ServedGuamiList {
+		logger.ConsumerLog.Debugf("WNC: Checking servedGuamiList[%d]: MCC=%s, MNC=%s", i, guami.PlmnId.Mcc, guami.PlmnId.Mnc)
+		
+		if ue.PlmnId.Mcc != "" && ue.PlmnId.Mnc != "" &&
+		   guami.PlmnId.Mcc == ue.PlmnId.Mcc && guami.PlmnId.Mnc == ue.PlmnId.Mnc {
+			servedGuami = guami
+			found = true
+			logger.ConsumerLog.Infof("WNC: Found matching PLMN at servedGuamiList[%d]: MCC=%s, MNC=%s", i, guami.PlmnId.Mcc, guami.PlmnId.Mnc)
+			break
+		}
+	}
+
+	if !found {
+		servedGuami = amfSelf.ServedGuamiList[0] // fallback
+		logger.ConsumerLog.Warnf("WNC: No matching PLMN found for UE (MCC=%s, MNC=%s), using servedGuamiList[0]: MCC=%s, MNC=%s", 
+			ue.PlmnId.Mcc, ue.PlmnId.Mnc, servedGuami.PlmnId.Mcc, servedGuami.PlmnId.Mnc)
+	}
 
 	var authInfo models.AuthenticationInfo
 	authInfo.SupiOrSuci = ue.Suci
 	if mnc, err := strconv.Atoi(servedGuami.PlmnId.Mnc); err != nil {
+		logger.ConsumerLog.Errorf("WNC: Failed to parse MNC '%s' as integer: %v", servedGuami.PlmnId.Mnc, err)
 		return nil, nil, err
 	} else {
 		authInfo.ServingNetworkName = fmt.Sprintf("5G:mnc%03d.mcc%s.3gppnetwork.org", mnc, servedGuami.PlmnId.Mcc)
+			logger.ConsumerLog.Infof("WNC: Generated ServingNetworkName: %s", authInfo.ServingNetworkName)
 	}
 	if resynchronizationInfo != nil {
 		authInfo.ResynchronizationInfo = resynchronizationInfo
