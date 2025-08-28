@@ -2001,6 +2001,15 @@ func HandleAuthenticationResponse(ue *context.AmfUe, accessType models.AccessTyp
 	authenticationResponse *nasMessage.AuthenticationResponse,
 ) error {
 	ue.GmmLog.Info("Handle Authentication Response")
+	
+	// WNC: Enhanced logging for authentication response debugging
+	ue.GmmLog.Infof("WNC: AUTH RESPONSE - SUPI: %s, GUTI: %s, AccessType: %s", ue.Supi, ue.Guti, accessType)
+	if ue.Tai.PlmnId != nil && ue.Tai.PlmnId.Mcc != "" && ue.Tai.PlmnId.Mnc != "" {
+		ue.GmmLog.Infof("WNC: AUTH RESPONSE - ServingPLMN: MCC=%s, MNC=%s", ue.Tai.PlmnId.Mcc, ue.Tai.PlmnId.Mnc)
+	}
+	if ue.PlmnId.Mcc != "" && ue.PlmnId.Mnc != "" {
+		ue.GmmLog.Infof("WNC: AUTH RESPONSE - UE_PLMN: MCC=%s, MNC=%s", ue.PlmnId.Mcc, ue.PlmnId.Mnc)
+	}
 
 	ue.StopT3560()
 
@@ -2033,6 +2042,19 @@ func HandleAuthenticationResponse(ue *context.AmfUe, accessType models.AccessTyp
 
 		if hResStar != av5gAka.HxresStar {
 			ue.GmmLog.Errorf("HRES* Validation Failure (received: %s, expected: %s)", hResStar, av5gAka.HxresStar)
+			
+			// WNC: Enhanced logging for HRES* validation failure debugging
+			ue.GmmLog.Errorf("WNC: HRES* VALIDATION FAILED - SUPI: %s", ue.Supi)
+			ue.GmmLog.Errorf("WNC: HRES* DEBUG - RAND: %s", av5gAka.Rand)
+			ue.GmmLog.Errorf("WNC: HRES* DEBUG - RES*: %s", hex.EncodeToString(resStar[:]))
+			ue.GmmLog.Errorf("WNC: HRES* DEBUG - Calculated_HRES*: %s", hResStar)
+			ue.GmmLog.Errorf("WNC: HRES* DEBUG - Expected_HXRES*: %s", av5gAka.HxresStar)
+			if ue.Tai.PlmnId != nil && ue.Tai.PlmnId.Mcc != "" && ue.Tai.PlmnId.Mnc != "" {
+				ue.GmmLog.Errorf("WNC: HRES* DEBUG - ServingPLMN: MCC=%s, MNC=%s", ue.Tai.PlmnId.Mcc, ue.Tai.PlmnId.Mnc)
+			}
+			if ue.PlmnId.Mcc != "" && ue.PlmnId.Mnc != "" {
+				ue.GmmLog.Errorf("WNC: HRES* DEBUG - UE_PLMN: MCC=%s, MNC=%s", ue.PlmnId.Mcc, ue.PlmnId.Mnc)
+			}
 
 			if ue.IdentityTypeUsedForRegistration == nasMessage.MobileIdentity5GSType5gGuti && ue.IdentityRequestSendTimes == 0 {
 				ue.IdentityRequestSendTimes++
@@ -2045,6 +2067,16 @@ func HandleAuthenticationResponse(ue *context.AmfUe, accessType models.AccessTyp
 					ArgAccessType: accessType,
 				}, logger.GmmLog)
 			}
+		}
+
+		// WNC: Enhanced logging for successful HRES* validation
+		ue.GmmLog.Infof("WNC: HRES* VALIDATION SUCCESS - SUPI: %s", ue.Supi)
+		ue.GmmLog.Infof("WNC: HRES* SUCCESS - RAND: %s, RES*: %s", av5gAka.Rand, hex.EncodeToString(resStar[:]))
+		if ue.Tai.PlmnId != nil && ue.Tai.PlmnId.Mcc != "" && ue.Tai.PlmnId.Mnc != "" {
+			ue.GmmLog.Infof("WNC: HRES* SUCCESS - ServingPLMN: MCC=%s, MNC=%s", ue.Tai.PlmnId.Mcc, ue.Tai.PlmnId.Mnc)
+		}
+		if ue.PlmnId.Mcc != "" && ue.PlmnId.Mnc != "" {
+			ue.GmmLog.Infof("WNC: HRES* SUCCESS - UE_PLMN: MCC=%s, MNC=%s", ue.PlmnId.Mcc, ue.PlmnId.Mnc)
 		}
 
 		response, problemDetails, err := consumer.GetConsumer().SendAuth5gAkaConfirmRequest(
