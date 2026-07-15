@@ -399,10 +399,12 @@ func (s *nudmService) UeCmRegistration(
 			ue.Supi,
 		)
 
+		// WNC: register with the served GUAMI matching the UE's serving PLMN (ue.PlmnId, fallback [0]).
+		servedGuami := amfSelf.SelectServedGuami(&ue.PlmnId)
 		registrationData := models.Amf3GppAccessRegistration{
 			AmfInstanceId:          amfSelf.NfId,
 			InitialRegistrationInd: initialRegistrationInd,
-			Guami:                  &amfSelf.ServedGuamiList[0],
+			Guami:                  &servedGuami,
 			RatType:                ue.RatType,
 			DeregCallbackUri:       deregCallbackUri,
 			// TODO: not support Homogenous Support of IMS Voice over PS Sessions this stage
@@ -438,9 +440,11 @@ func (s *nudmService) UeCmRegistration(
 			}
 		}
 	case models.AccessType_NON_3_GPP_ACCESS:
+		// WNC: register with the served GUAMI matching the UE's serving PLMN (ue.PlmnId, fallback [0]).
+		servedGuami := amfSelf.SelectServedGuami(&ue.PlmnId)
 		registrationData := models.AmfNon3GppAccessRegistration{
 			AmfInstanceId: amfSelf.NfId,
-			Guami:         &amfSelf.ServedGuamiList[0],
+			Guami:         &servedGuami,
 			RatType:       ue.RatType,
 		}
 

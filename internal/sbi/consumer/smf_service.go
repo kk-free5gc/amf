@@ -219,8 +219,14 @@ func (s *nsmfService) buildCreateSmContextRequest(ue *amf_context.AmfUe, smConte
 	smContextCreateData.SNssai = &snssai
 	smContextCreateData.Dnn = smContext.Dnn()
 	smContextCreateData.ServingNfId = context.NfId
-	smContextCreateData.Guami = &context.ServedGuamiList[0]
-	smContextCreateData.ServingNetwork = context.ServedGuamiList[0].PlmnId
+	// WNC: use the served GUAMI matching the UE's serving PLMN (ue.PlmnId) so ServingNetwork
+	// matches the PLMN the AM policy association was created with (pcf_service.go uses the
+	// same ue.PlmnId). Otherwise the PCF rejects SM policy creation with "Can't find
+	// corresponding AM Policy" (FindAMPolicy compares serving PLMN), which crashes the PDU
+	// session setup. Falls back to ServedGuamiList[0].
+	servedGuami := context.SelectServedGuami(&ue.PlmnId)
+	smContextCreateData.Guami = &servedGuami
+	smContextCreateData.ServingNetwork = servedGuami.PlmnId
 	if requestType != nil {
 		smContextCreateData.RequestType = *requestType
 	}

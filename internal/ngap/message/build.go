@@ -1003,7 +1003,10 @@ func BuildInitialContextSetupRequest(
 	amfSetID := &guami.AMFSetID
 	amfPtrID := &guami.AMFPointer
 
-	servedGuami := amfSelf.ServedGuamiList[0]
+	// WNC: send the GUAMI matching the UE's serving PLMN (ue.PlmnId) in the
+	// InitialContextSetupRequest so the GUAMI advertised to the RAN is consistent with the
+	// UE's serving PLMN and the assigned 5G-GUTI. Falls back to ServedGuamiList[0].
+	servedGuami := amfSelf.SelectServedGuami(&amfUe.PlmnId)
 
 	*plmnID = ngapConvert.PlmnIdToNgap(util.PlmnIdNidToModelsPlmnId(*servedGuami.PlmnId))
 	amfRegionID.Value, amfSetID.Value, amfPtrID.Value = ngapConvert.AmfIdToNgap(servedGuami.AmfId)

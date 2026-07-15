@@ -483,8 +483,12 @@ func HandleRegistrationRequest(ue *context.AmfUe, anType models.AccessType, proc
 		ue.PlmnId = util.PlmnIdNidToModelsPlmnId(*guamiFromUeGuti.PlmnId)
 		ue.GmmLog.Infof("MobileIdentity5GS: GUTI[%s]", guti)
 
-		// TODO: support multiple ServedGuami
-		servedGuami := amfSelf.ServedGuamiList[0]
+		// WNC: match the UE's GUTI GUAMI against ALL served GUAMIs (by PLMN) rather than
+		// only ServedGuamiList[0], so a UE registered on a non-[0] served PLMN is not
+		// falsely treated as "serving AMF changed" (which would trigger a needless context
+		// transfer / re-auth and RRC churn).
+		guamiFromUeGutiPlmn := util.PlmnIdNidToModelsPlmnId(*guamiFromUeGuti.PlmnId)
+		servedGuami := amfSelf.SelectServedGuami(&guamiFromUeGutiPlmn)
 		if reflect.DeepEqual(guamiFromUeGuti, servedGuami) {
 			ue.ServingAmfChanged = false
 			// refresh 5G-GUTI according to 6.12.3 Subscription temporary identifier, TS33.501

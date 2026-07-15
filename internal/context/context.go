@@ -217,12 +217,35 @@ func (context *AMFContext) AllocateAmfUeNgapID() (int64, error) {
 }
 
 func (context *AMFContext) AllocateGutiToUe(ue *AmfUe) {
-	servedGuami := context.ServedGuamiList[0]
+	// WNC: pick the served GUAMI matching the UE's serving PLMN (ue.PlmnId) instead of
+	// always using ServedGuamiList[0], so the assigned 5G-GUTI PLMN matches the PLMN the
+	// UE registered on. ue.PlmnId is the same serving-PLMN source used by the AM policy
+	// association and AUSF selection. Falls back to ServedGuamiList[0] when the serving
+	// PLMN is not yet known (brand-new UE) or unmatched.
+	servedGuami := context.SelectServedGuami(&ue.PlmnId)
 	ue.Tmsi = context.TmsiAllocate()
 
 	plmnID := servedGuami.PlmnId.Mcc + servedGuami.PlmnId.Mnc
 	tmsiStr := fmt.Sprintf("%08x", ue.Tmsi)
 	ue.Guti = plmnID + servedGuami.AmfId + tmsiStr
+}
+
+// WNC: SelectServedGuami returns the served GUAMI whose PLMN (MCC+MNC) matches plmnId.
+// It falls back to the first served GUAMI when plmnId is nil or no entry matches,
+// preserving the original single-GUAMI behaviour. This lets the AMF serve UEs on any
+// configured PLMN regardless of the order of servedGuamiList in amfcfg.yaml.
+func (context *AMFContext) SelectServedGuami(plmnId *models.PlmnId) models.Guami {
+	if plmnId != nil && plmnId.Mcc != "" && plmnId.Mnc != "" {
+		for i := range context.ServedGuamiList {
+			guami := context.ServedGuamiList[i]
+			if guami.PlmnId != nil && guami.PlmnId.Mcc == plmnId.Mcc && guami.PlmnId.Mnc == plmnId.Mnc {
+				return guami
+			}
+		}
+		logger.CtxLog.Warnf("WNC: SelectServedGuami: no served GUAMI matches serving PLMN[mcc:%s mnc:%s]; "+
+			"falling back to ServedGuamiList[0]", plmnId.Mcc, plmnId.Mnc)
+	}
+	return context.ServedGuamiList[0]
 }
 
 func (context *AMFContext) AllocateRegistrationArea(ue *AmfUe, anType models.AccessType) {
