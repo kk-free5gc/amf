@@ -2322,8 +2322,31 @@ func HandleRegistrationComplete(ue *context.AmfUe, accessType models.AccessType,
 	//	2. AMF determines that it needs to update the Homogeneous Support of IMS Voice over PS Sessions (TS 23.501 5.16.3.3)
 	// Then invoke Nudm_UECM_Update to send "Homogeneous Support of IMS Voice over PS Sessions" indication to udm
 
-	if ue.RegistrationRequest.UplinkDataStatus == nil &&
-		ue.RegistrationRequest.GetFOR() == nasMessage.FollowOnRequestNoPending {
+	// WNC: A UE that performs Initial Registration with Follow-On Request = 0 gets an
+	// immediate (spec-legal) AN release here. Some UEs that cannot be reconfigured then loop
+	// through repeated Initial Registrations before they can set up a default PDU session.
+	// When treatInitialRegAsFollowOn is enabled, treat such a UE as if it had set Follow-On
+	// Request = 1: skip the immediate release and keep the N2 connection, exactly like a real
+	// FOR=1 UE. The held connection is then bounded solely by the gNB's RRC inactivity timer
+	// (the same mechanism that bounds every FOR=1 UE) — no extra AMF timer is involved.
+	fakeFollowOn := factory.AmfConfig.Configuration.TreatInitialRegAsFollowOn &&
+		ue.RegistrationType5GS == nasMessage.RegistrationType5GSInitialRegistration
+	switch {
+	case ue.RegistrationRequest.UplinkDataStatus != nil ||
+		ue.RegistrationRequest.GetFOR() != nasMessage.FollowOnRequestNoPending:
+		// WNC: the UE itself asked to keep the connection (real Follow-On Request = 1) or
+		// signalled pending uplink data. Stock behaviour: do not release.
+		ue.GmmLog.Infof("WNC: keeping N2 connection after registration: UE requested Follow-On " +
+			"(real FOR=1) or has UplinkDataStatus")
+	case fakeFollowOn:
+		// WNC: the UE sent FOR=0, but treatInitialRegAsFollowOn is on for Initial Registration,
+		// so keep the connection as if FOR=1. Release is deferred to the gNB RRC inactivity timer.
+		ue.GmmLog.Infof("WNC: keeping N2 connection after registration: FOR=0 treated as FOR=1 " +
+			"(treatInitialRegAsFollowOn=on; release deferred to gNB RRC inactivity)")
+	default:
+		// WNC: the UE sent FOR=0 and no override applies -> original spec-legal AN release.
+		ue.GmmLog.Infof("WNC: releasing N2 connection after registration: UE FOR=0, no UplinkDataStatus, " +
+			"treatInitialRegAsFollowOn=off")
 		ngap_message.SendUEContextReleaseCommand(ue.RanUe[accessType], context.UeContextN2NormalRelease,
 			ngapType.CausePresentNas, ngapType.CauseNasPresentNormalRelease)
 	}

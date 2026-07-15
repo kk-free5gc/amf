@@ -95,6 +95,13 @@ type Configuration struct {
 	Locality               string            `yaml:"locality,omitempty" valid:"type(string),optional"`
 	SCTP                   *Sctp             `yaml:"sctp,omitempty" valid:"optional"`
 	DefaultUECtxReq        bool              `yaml:"defaultUECtxReq,omitempty" valid:"type(bool),optional"`
+	// WNC: When true, treat a UE that performs Initial Registration with Follow-On Request
+	// = 0 as if it had set Follow-On Request = 1: the AMF keeps the N2/RRC connection after
+	// registration instead of releasing it immediately. This prevents UEs that cannot be
+	// reconfigured from looping through repeated Initial Registrations before they can set up
+	// a default PDU session. The held connection is bounded by the gNB's RRC inactivity timer,
+	// exactly like a real FOR=1 UE. Default false = stock behaviour.
+	TreatInitialRegAsFollowOn bool `yaml:"treatInitialRegAsFollowOn,omitempty" valid:"type(bool),optional"`
 }
 
 type Logger struct {
