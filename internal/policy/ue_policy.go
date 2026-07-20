@@ -1,6 +1,14 @@
 package policy
 
+// DUPLICATION NOTICE: this UE-policy encoder is duplicated in the PCF module at
+// NFs/pcf/internal/policy/ue_policy.go. Go forbids importing another module's internal
+// package, so the two copies must be kept in sync by hand — any change to the config
+// structs, the YAML parsing in convertYAMLToInternalConfig, or the byte encoding in
+// BuildManageUEPolicyCommand (and its helpers) must be mirrored in both files. The
+// encoding is guarded in both packages by TestBuildManageUEPolicyCommand_TMobile.
+
 import (
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -25,7 +33,7 @@ type PLMNConfig struct {
 }
 
 type InstructionConfig struct {
-	UPSC       uint8              `json:"upsc"`
+	UPSC       uint16             `json:"upsc"`
 	PolicyPart UEPolicyPartConfig `json:"policyPart"`
 }
 
@@ -41,10 +49,12 @@ type URSPRule struct {
 }
 
 type TrafficDescriptor struct {
-	Type        uint8  `json:"type"` // 1=match-all, 136=DNN, 16=IPv4 remote address
+	Type        uint8  `json:"type"` // 1=match-all, 8=OS Id + OS App Id, 136=DNN, 16=IPv4 remote address
 	DNN         string `json:"dnn,omitempty"`
 	IPv4Address string `json:"ipv4Address,omitempty"`
 	IPv4Mask    string `json:"ipv4Mask,omitempty"`
+	OSId        []byte `json:"osId,omitempty"`    // 16-byte OS Id (from UUID) for type 8
+	OSAppId     string `json:"osAppId,omitempty"` // OS App Id string for type 8
 }
 
 type RouteSelectionDescriptor struct {
@@ -81,7 +91,7 @@ type YAMLPlmnIdConfig struct {
 }
 
 type YAMLInstructionConfig struct {
-	UPSC        uint8                  `yaml:"upsc"`
+	UPSC        uint16                 `yaml:"upsc"`
 	PolicyParts []YAMLPolicyPartConfig `yaml:"policyParts"`
 }
 
@@ -98,8 +108,10 @@ type YAMLURSPRule struct {
 }
 
 type YAMLTrafficDescriptorComponent struct {
-	Type  string `yaml:"type"`
-	Value string `yaml:"value,omitempty"`
+	Type    string `yaml:"type"`
+	Value   string `yaml:"value,omitempty"`
+	OSId    string `yaml:"osId,omitempty"`    // UUID string, e.g. "97a498e3-fc92-5c94-8986-0333d06e4e47"
+	OSAppId string `yaml:"osAppId,omitempty"` // OS App Id string, e.g. "PRIORITIZE_LATENCY"
 }
 
 type YAMLRouteSelectionDescriptor struct {
@@ -292,6 +304,12 @@ func convertYAMLToInternalConfig(yamlConfig *YAMLUEPolicyConfig) (*UEPolicyConfi
 									internalTrafficDesc.IPv4Mask = parts[1]
 								}
 							}
+						case "OSAppId":
+							// OS Id + OS App Id type (3GPP TS 24.526): 16-byte OS Id (UUID)
+							// followed by the OS App Id string.
+							internalTrafficDesc.Type = 0x08
+							internalTrafficDesc.OSId = parseUUID(trafficDesc.OSId)
+							internalTrafficDesc.OSAppId = trafficDesc.OSAppId
 						}
 						
 						internalRule.TrafficDescriptors = append(internalRule.TrafficDescriptors, internalTrafficDesc)
@@ -532,9 +550,20 @@ func buildTrafficDescriptors(descriptors []TrafficDescriptor) ([]byte, error) {
 			// Per Wireshark case 0x01: Match-all type, return immediately
 			return payload, nil
 			
+		case 8: // OS Id + OS App Id type (3GPP TS 24.526)
+			payload = append(payload, 8)
+
+			// OS Id: 16-byte UUID
+			payload = append(payload, desc.OSId...)
+
+			// OS App Id: 1-byte length followed by the ASCII string
+			appIdBytes := []byte(desc.OSAppId)
+			payload = append(payload, uint8(len(appIdBytes)))
+			payload = append(payload, appIdBytes...)
+
 		case 16: // IPv4 remote address
 			payload = append(payload, 16)
-			
+
 			// Parse IPv4 address and mask
 			ipBytes := parseIPv4(desc.IPv4Address)
 			maskBytes := parseIPv4(desc.IPv4Mask)
@@ -673,6 +702,19 @@ func parseIPv4(ipStr string) []byte {
 		return []byte{0, 0, 0, 0}
 	}
 	return ip.To4()
+}
+
+// parseUUID converts a UUID string (e.g. "97a498e3-fc92-5c94-8986-0333d06e4e47")
+// into its 16-byte representation for the OS Id of a UE policy traffic descriptor.
+// On any parse error it logs a warning and returns 16 zero bytes.
+func parseUUID(uuid string) []byte {
+	hexStr := strings.ReplaceAll(uuid, "-", "")
+	b, err := hex.DecodeString(hexStr)
+	if err != nil || len(b) != 16 {
+		logger.GmmLog.Warnf("WNC: Failed to parse OS Id UUID %q (decoded %d bytes): %v", uuid, len(b), err)
+		return make([]byte, 16)
+	}
+	return b
 }
 
 // encodeDNNAsAPN encodes DNN string in APN format as defined in 3GPP TS 23.003
