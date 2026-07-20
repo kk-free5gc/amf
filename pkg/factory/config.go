@@ -102,6 +102,22 @@ type Configuration struct {
 	// a default PDU session. The held connection is bounded by the gNB's RRC inactivity timer,
 	// exactly like a real FOR=1 UE. Default false = stock behaviour.
 	TreatInitialRegAsFollowOn bool `yaml:"treatInitialRegAsFollowOn,omitempty" valid:"type(bool),optional"`
+	// WNC: Controls whether the AMF delivers UE Policy (URSP) to the UE via the DL NAS
+	// Transport "Manage UE Policy Command" after registration. This gates every delivery
+	// path: the 3GPP PCF flow (UEPolicyControlCreate -> PCF -> N1N2 transparent forward),
+	// the legacy direct TriggerUEPolicyDelivery path, and the PCF-notification-driven
+	// SendUEPolicyToUE path. Uses a pointer so that an absent field preserves the existing
+	// (enabled) behaviour; set `enableUEPolicy: false` to turn UE Policy delivery off.
+	EnableUEPolicy *bool `yaml:"enableUEPolicy,omitempty" valid:"type(*bool),optional"`
+}
+
+// UEPolicyEnabled reports whether UE Policy delivery is enabled. When the config field
+// is omitted (nil) the feature defaults to enabled to preserve existing behaviour.
+func (c *Configuration) UEPolicyEnabled() bool {
+	if c.EnableUEPolicy == nil {
+		return true
+	}
+	return *c.EnableUEPolicy
 }
 
 type Logger struct {

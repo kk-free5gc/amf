@@ -777,11 +777,15 @@ func HandleInitialRegistration(ue *context.AmfUe, anType models.AccessType) erro
 	gmm_message.SendRegistrationAccept(ue, anType, nil, nil, nil, nil, nil)
 
 	// Create UE Policy Association with PCF after registration
-	problemDetails, err = consumer.GetConsumer().UEPolicyControlCreate(ue, anType)
-	if problemDetails != nil {
-		ue.GmmLog.Errorf("WNC: UE Policy Control Create Failed Problem[%+v]", problemDetails)
-	} else if err != nil {
-		ue.GmmLog.Errorf("WNC: UE Policy Control Create Error[%+v]", err)
+	if factory.AmfConfig.Configuration.UEPolicyEnabled() {
+		problemDetails, err = consumer.GetConsumer().UEPolicyControlCreate(ue, anType)
+		if problemDetails != nil {
+			ue.GmmLog.Errorf("WNC: UE Policy Control Create Failed Problem[%+v]", problemDetails)
+		} else if err != nil {
+			ue.GmmLog.Errorf("WNC: UE Policy Control Create Error[%+v]", err)
+		}
+	} else {
+		ue.GmmLog.Infoln("WNC: UE Policy delivery disabled by config (enableUEPolicy=false), skipping UEPolicyControlCreate")
 	}
 
 	return nil
@@ -789,6 +793,11 @@ func HandleInitialRegistration(ue *context.AmfUe, anType models.AccessType) erro
 
 func TriggerUEPolicyDelivery(amfUe *context.AmfUe, anType models.AccessType) {
 	logger.GmmLog.Info("WNC: Triggering UE Policy Delivery")
+
+	if !factory.AmfConfig.Configuration.UEPolicyEnabled() {
+		logger.GmmLog.Infoln("WNC: UE Policy delivery disabled by config (enableUEPolicy=false), skipping TriggerUEPolicyDelivery")
+		return
+	}
 
 	if amfUe == nil {
 		logger.GmmLog.Error("WNC: TriggerUEPolicyDelivery: AmfUe is nil")

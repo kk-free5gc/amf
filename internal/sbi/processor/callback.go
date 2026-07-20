@@ -15,6 +15,7 @@ import (
 	amf_nas "github.com/free5gc/amf/internal/nas"
 	ngap_message "github.com/free5gc/amf/internal/ngap/message"
 	"github.com/free5gc/amf/internal/policy"
+	"github.com/free5gc/amf/pkg/factory"
 	"github.com/free5gc/ngap/ngapType"
 	"github.com/free5gc/openapi/models"
 )
@@ -389,6 +390,11 @@ func (p *Processor) UePolicyControlUpdateNotifyProcedure(uePolicyAssociationId s
 
 func (p *Processor) SendUEPolicyToUE(ue *context.AmfUe, policyUpdate models.PcfUePolicyControlPolicyUpdate) {
 	logger.ProducerLog.Infof("WNC: Sending UE Policy to UE %s", ue.Supi)
+
+	if !factory.AmfConfig.Configuration.UEPolicyEnabled() {
+		logger.ProducerLog.Infof("WNC: UE Policy delivery disabled by config (enableUEPolicy=false), skipping for UE %s", ue.Supi)
+		return
+	}
 
 	// Check if UE is CM-Connected
 	if !ue.CmConnect(models.AccessType__3_GPP_ACCESS) {
