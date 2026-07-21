@@ -110,3 +110,28 @@ func TestSctp_validate(t *testing.T) {
 		})
 	}
 }
+
+// TestAllowedNssaiModeHelpers verifies the [WNC] Allowed NSSAI mode helpers.
+func TestAllowedNssaiModeHelpers(t *testing.T) {
+	tests := []struct {
+		mode         string
+		onFallback   bool
+		alwaysAllReq bool
+	}{
+		{mode: "", onFallback: false, alwaysAllReq: false},
+		{mode: AllowedNssaiModeDefault, onFallback: false, alwaysAllReq: false},
+		{mode: AllowedNssaiModeAllSubscribedNoReq, onFallback: true, alwaysAllReq: false},
+		{mode: AllowedNssaiModeAllSubscribedAlways, onFallback: true, alwaysAllReq: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			c := &Configuration{AllowedNssaiMode: tt.mode}
+			if got := c.AllowAllSubscribedNssaiOnFallback(); got != tt.onFallback {
+				t.Errorf("AllowAllSubscribedNssaiOnFallback() = %v, want %v", got, tt.onFallback)
+			}
+			if got := c.AllowAllSubscribedNssaiAlways(); got != tt.alwaysAllReq {
+				t.Errorf("AllowAllSubscribedNssaiAlways() = %v, want %v", got, tt.alwaysAllReq)
+			}
+		})
+	}
+}

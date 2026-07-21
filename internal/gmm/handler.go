@@ -1329,8 +1329,12 @@ func handleRequestedNssai(ue *context.AmfUe, anType models.AccessType) error {
 	// if registration request has no requested nssai, or non of snssai in requested nssai is permitted by nssf
 	// then use ue subscribed snssai which is marked as default as allowed nssai
 	if len(ue.AllowedNssai[anType]) == 0 {
+		// [WNC] When allowedNssaiMode enables it, advertise every supported subscribed
+		// S-NSSAI (not just the default-indicated one) so the Registration Accept
+		// Allowed NSSAI lists all slices provisioned on the SIM.
+		allowAll := factory.AmfConfig.Configuration.AllowAllSubscribedNssaiOnFallback()
 		for _, snssai := range ue.SubscribedNssai {
-			if snssai.DefaultIndication {
+			if allowAll || snssai.DefaultIndication {
 				if amfSelf.InPlmnSupportList(*snssai.SubscribedSnssai) {
 					allowedSnssai := models.AllowedSnssai{
 						AllowedSnssai: snssai.SubscribedSnssai,
@@ -1339,6 +1343,32 @@ func handleRequestedNssai(ue *context.AmfUe, anType models.AccessType) error {
 				}
 			}
 		}
+		if allowAll {
+			ue.GmmLog.Infof("[WNC] allowedNssaiMode=%q: fallback Allowed NSSAI now has %d subscribed slice(s)",
+				factory.AmfConfig.Configuration.AllowedNssaiMode, len(ue.AllowedNssai[anType]))
+		}
+	}
+
+	// [WNC] allSubscribedAlways: even when the UE requested a specific NSSAI (so the
+	// fallback above was skipped), advertise every other supported subscribed S-NSSAI
+	// as well, so the Registration Accept Allowed NSSAI lists all slices provisioned on
+	// the SIM. Deduplicated against slices already added by the requested-NSSAI branch.
+	if factory.AmfConfig.Configuration.AllowAllSubscribedNssaiAlways() {
+		added := 0
+		for _, snssai := range ue.SubscribedNssai {
+			if !amfSelf.InPlmnSupportList(*snssai.SubscribedSnssai) {
+				continue
+			}
+			if ue.InAllowedNssai(*snssai.SubscribedSnssai, anType) {
+				continue
+			}
+			ue.AllowedNssai[anType] = append(ue.AllowedNssai[anType], models.AllowedSnssai{
+				AllowedSnssai: snssai.SubscribedSnssai,
+			})
+			added++
+		}
+		ue.GmmLog.Infof("[WNC] allowedNssaiMode=allSubscribedAlways: added %d extra subscribed slice(s), "+
+			"Allowed NSSAI now has %d slice(s)", added, len(ue.AllowedNssai[anType]))
 	}
 	return nil
 }

@@ -109,6 +109,45 @@ type Configuration struct {
 	// SendUEPolicyToUE path. Uses a pointer so that an absent field preserves the existing
 	// (enabled) behaviour; set `enableUEPolicy: false` to turn UE Policy delivery off.
 	EnableUEPolicy *bool `yaml:"enableUEPolicy,omitempty" valid:"type(*bool),optional"`
+	// [WNC] Selects how the AMF populates the Allowed NSSAI IE of the Registration
+	// Accept. See the AllowedNssaiMode* constants and the
+	// AllowAllSubscribedNssaiOnFallback / AllowAllSubscribedNssaiAlways helpers.
+	//   ""/"default"          - stock behaviour: the no-Requested-NSSAI fallback
+	//                           advertises only the default-indicated subscribed slice.
+	//   "allSubscribedNoReq"  - the fallback advertises ALL subscribed slices this AMF
+	//                           supports (InPlmnSupportList), not just the default one.
+	//   "allSubscribedAlways" - reserved for advertising all subscribed slices even when
+	//                           a Requested NSSAI is present; currently behaves like
+	//                           "allSubscribedNoReq" (fallback path only).
+	// An omitted field defaults to stock behaviour.
+	AllowedNssaiMode string `yaml:"allowedNssaiMode,omitempty" valid:"in(default|allSubscribedNoReq|allSubscribedAlways),optional"`
+}
+
+// AllowedNssaiMode values for Configuration.AllowedNssaiMode.
+const (
+	AllowedNssaiModeDefault             = "default"
+	AllowedNssaiModeAllSubscribedNoReq  = "allSubscribedNoReq"
+	AllowedNssaiModeAllSubscribedAlways = "allSubscribedAlways"
+)
+
+// AllowAllSubscribedNssaiOnFallback reports whether the no-Requested-NSSAI fallback
+// in handleRequestedNssai should advertise every subscribed S-NSSAI supported by this
+// AMF (not just the default-indicated one). True for both allSubscribedNoReq and the
+// (future) allSubscribedAlways. Empty/"default" -> false, preserving stock behaviour.
+func (c *Configuration) AllowAllSubscribedNssaiOnFallback() bool {
+	switch c.AllowedNssaiMode {
+	case AllowedNssaiModeAllSubscribedNoReq, AllowedNssaiModeAllSubscribedAlways:
+		return true
+	default:
+		return false
+	}
+}
+
+// AllowAllSubscribedNssaiAlways reports whether all subscribed slices should be
+// advertised even when a Requested NSSAI is present. Reserved for a future change;
+// the requested-NSSAI path does not consult it yet.
+func (c *Configuration) AllowAllSubscribedNssaiAlways() bool {
+	return c.AllowedNssaiMode == AllowedNssaiModeAllSubscribedAlways
 }
 
 // UEPolicyEnabled reports whether UE Policy delivery is enabled. When the config field
