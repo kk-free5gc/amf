@@ -1192,8 +1192,20 @@ func handleRequestedNssai(ue *context.AmfUe, anType models.AccessType) error {
 					ue.AllowedNssai[anType] = append(ue.AllowedNssai[anType], allowedSnssai)
 				}
 			} else {
-				needSliceSelection = true
-				break
+				// [WNC] Do not start AMF re-allocation for a slice that is missing from the
+				// subscription. Reject only that slice in the Registration Accept with cause #1,
+				// and keep checking the other requested slices so they can still be allowed.
+				rejectedSnssai := models.Snssai{
+					Sst: requestedSnssai.ServingSnssai.Sst,
+					Sd:  requestedSnssai.ServingSnssai.Sd,
+				}
+				if ue.AddRejectedNssaiInTa(rejectedSnssai) {
+					ue.GmmLog.Warnf("[WNC] Rejected NSSAI: the UE requested S-NSSAI [SST:%d SD:%s], "+
+						"but the subscription does not contain it; rejected with cause #1 "+
+						"(S-NSSAI not available in the current registration area)",
+						rejectedSnssai.Sst, rejectedSnssai.Sd)
+				}
+				continue
 			}
 
 			reqSnssai := models.Snssai{

@@ -525,6 +525,23 @@ func (ue *AmfUe) InSubscribedNssai(targetSNssai models.Snssai) bool {
 	return false
 }
 
+// [WNC] AddRejectedNssaiInTa records an S-NSSAI that the Registration Accept must
+// reject with cause #1 "S-NSSAI not available in the current registration area"
+// (nasConvert.RejectedNssaiToNas encodes RejectedNssaiInTa with that cause).
+// It returns false when the S-NSSAI is already in the list.
+func (ue *AmfUe) AddRejectedNssaiInTa(targetSNssai models.Snssai) bool {
+	if ue.NetworkSliceInfo == nil {
+		ue.NetworkSliceInfo = &models.AuthorizedNetworkSliceInfo{}
+	}
+	for _, rejectedSnssai := range ue.NetworkSliceInfo.RejectedNssaiInTa {
+		if openapi.SnssaiEqualFold(rejectedSnssai, targetSNssai) {
+			return false
+		}
+	}
+	ue.NetworkSliceInfo.RejectedNssaiInTa = append(ue.NetworkSliceInfo.RejectedNssaiInTa, targetSNssai)
+	return true
+}
+
 func (ue *AmfUe) GetNsiInformationFromSnssai(anType models.AccessType, snssai models.Snssai) *models.NsiInformation {
 	for _, allowedSnssai := range ue.AllowedNssai[anType] {
 		if openapi.SnssaiEqualFold(*allowedSnssai.AllowedSnssai, snssai) {
