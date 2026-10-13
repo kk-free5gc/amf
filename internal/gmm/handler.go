@@ -215,6 +215,25 @@ func transport5GSMMessage(ue *context.AmfUe, anType models.AccessType,
 	return nil
 }
 
+// [WNC] selectSnssaiWithoutSnssaiIe picks the S-NSSAI for a PDU Session Establishment Request
+// without S-NSSAI IE. It returns the S-NSSAI, the index of the condition that picked it, and that
+// condition as text. See preferSubscribedDefaultInAllowedNssai in config/amfcfg.yaml.
+func selectSnssaiWithoutSnssaiIe(ue *context.AmfUe, anType models.AccessType) (models.Snssai, int, string, error) {
+	allowedNssai := ue.AllowedNssai[anType]
+	if len(allowedNssai) == 0 {
+		return models.Snssai{}, 0, "", errors.New("Ue doesn't have allowedNssai")
+	}
+	if len(allowedNssai) == 1 {
+		return *allowedNssai[0].AllowedSnssai, 1, "the Allowed NSSAI has exactly one S-NSSAI", nil
+	}
+	if factory.AmfConfig.Configuration.PreferSubscribedDefaultInAllowedNssai {
+		if defaultSnssai, ok := ue.SingleDefaultSubscribedSnssai(); ok && ue.InAllowedNssai(defaultSnssai, anType) {
+			return defaultSnssai, 2, "the only Default S-NSSAI is in the Allowed NSSAI", nil
+		}
+	}
+	return *allowedNssai[0].AllowedSnssai, 3, "the first S-NSSAI in the Allowed NSSAI", nil
+}
+
 func CreatePDUSession(ulNasTransport *nasMessage.ULNASTransport,
 	ue *context.AmfUe,
 	anType models.AccessType,
@@ -229,13 +248,15 @@ func CreatePDUSession(ulNasTransport *nasMessage.ULNASTransport,
 
 	// If the S-NSSAI IE is not included and the user's subscription context obtained from UDM. AMF shall
 	// select a default snssai
+	var snssaiIndex int
+	var snssaiReason string
 	if ulNasTransport.SNSSAI != nil {
 		snssai = nasConvert.SnssaiToModels(ulNasTransport.SNSSAI)
 	} else {
-		if allowedNssai, ok := ue.AllowedNssai[anType]; ok {
-			snssai = *allowedNssai[0].AllowedSnssai
-		} else {
-			return false, errors.New("Ue doesn't have allowedNssai")
+		var errSelect error
+		snssai, snssaiIndex, snssaiReason, errSelect = selectSnssaiWithoutSnssaiIe(ue, anType)
+		if errSelect != nil {
+			return false, errSelect
 		}
 	}
 
@@ -256,6 +277,18 @@ func CreatePDUSession(ulNasTransport *nasMessage.ULNASTransport,
 				}
 			}
 		}
+	}
+
+	if ulNasTransport.SNSSAI == nil {
+		dnnSource := "from the UE"
+		if ulNasTransport.DNN == nil {
+			dnnSource = "picked by the AMF"
+		}
+		ue.GmmLog.Warnf("[WNC] PDU Session Establishment Request without S-NSSAI IE "+
+			"[PDU session ID: %d, DNN: %q %s]: AMF picked S-NSSAI [SST:%d SD:%s] by index %d: %s "+
+			"(preferSubscribedDefaultInAllowedNssai=%t)",
+			pduSessionID, dnn, dnnSource, snssai.Sst, snssai.Sd, snssaiIndex, snssaiReason,
+			factory.AmfConfig.Configuration.PreferSubscribedDefaultInAllowedNssai)
 	}
 
 	if newSmContext, cause, errSelectSmf := consumer.GetConsumer().SelectSmf(

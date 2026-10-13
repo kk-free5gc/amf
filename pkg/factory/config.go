@@ -106,6 +106,11 @@ type Configuration struct {
 	// reads the 5G-S-TMSI from NAS IE "5GS mobile identity" in the Service Request instead.
 	// Default false = stock behaviour. See useNasIdentityIfNgapSTmsiMissing in config/amfcfg.yaml.
 	UseNasIdentityIfNgapSTmsiMissing bool `yaml:"useNasIdentityIfNgapSTmsiMissing,omitempty" valid:"type(bool),optional"`
+	// [WNC] For a PDU Session Establishment Request without S-NSSAI IE: when true, prefer the
+	// only Default S-NSSAI if it is in the Allowed NSSAI (TS 23.502 clause 4.3.2.2.1). Default
+	// false = stock: the first Allowed S-NSSAI. See preferSubscribedDefaultInAllowedNssai in
+	// config/amfcfg.yaml.
+	PreferSubscribedDefaultInAllowedNssai bool `yaml:"preferSubscribedDefaultInAllowedNssai,omitempty" valid:"type(bool),optional"`
 	// WNC: Controls whether the AMF delivers UE Policy (URSP) to the UE via the DL NAS
 	// Transport "Manage UE Policy Command" after registration. This gates every delivery
 	// path: the 3GPP PCF flow (UEPolicyControlCreate -> PCF -> N1N2 transparent forward),

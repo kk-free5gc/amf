@@ -525,6 +525,25 @@ func (ue *AmfUe) InSubscribedNssai(targetSNssai models.Snssai) bool {
 	return false
 }
 
+// [WNC] SingleDefaultSubscribedSnssai returns the Default S-NSSAI when the subscription marks
+// exactly one Subscribed S-NSSAI as default. It returns false for zero or several.
+func (ue *AmfUe) SingleDefaultSubscribedSnssai() (models.Snssai, bool) {
+	var defaultSnssai *models.Snssai
+	for _, subscribedSnssai := range ue.SubscribedNssai {
+		if !subscribedSnssai.DefaultIndication || subscribedSnssai.SubscribedSnssai == nil {
+			continue
+		}
+		if defaultSnssai != nil {
+			return models.Snssai{}, false
+		}
+		defaultSnssai = subscribedSnssai.SubscribedSnssai
+	}
+	if defaultSnssai == nil {
+		return models.Snssai{}, false
+	}
+	return *defaultSnssai, true
+}
+
 // [WNC] AddRejectedNssaiInTa records an S-NSSAI that the Registration Accept must
 // reject with cause #1 "S-NSSAI not available in the current registration area"
 // (nasConvert.RejectedNssaiToNas encodes RejectedNssaiInTa with that cause).
