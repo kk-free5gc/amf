@@ -102,6 +102,10 @@ type Configuration struct {
 	// a default PDU session. The held connection is bounded by the gNB's RRC inactivity timer,
 	// exactly like a real FOR=1 UE. Default false = stock behaviour.
 	TreatInitialRegAsFollowOn bool `yaml:"treatInitialRegAsFollowOn,omitempty" valid:"type(bool),optional"`
+	// [WNC] Fallback for a Service Request without NGAP IE "5G-S-TMSI": when true, the AMF
+	// reads the 5G-S-TMSI from NAS IE "5GS mobile identity" in the Service Request instead.
+	// Default false = stock behaviour. See useNasIdentityIfNgapSTmsiMissing in config/amfcfg.yaml.
+	UseNasIdentityIfNgapSTmsiMissing bool `yaml:"useNasIdentityIfNgapSTmsiMissing,omitempty" valid:"type(bool),optional"`
 	// WNC: Controls whether the AMF delivers UE Policy (URSP) to the UE via the DL NAS
 	// Transport "Manage UE Policy Command" after registration. This gates every delivery
 	// path: the 3GPP PCF flow (UEPolicyControlCreate -> PCF -> N1N2 transparent forward),

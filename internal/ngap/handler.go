@@ -474,6 +474,14 @@ func handleInitialUEMessageMain(ran *context.AmfRan,
 
 		id, idType, err = amf_nas.GetNas5GSMobileIdentity(gmmMessage)
 		ran.Log.Infof("5GSMobileIdentity [%q:%q, err: %v]", idType, id, err)
+	} else if nasMsgType == nas.MsgTypeServiceRequest &&
+		factory.AmfConfig.Configuration.UseNasIdentityIfNgapSTmsiMissing {
+		// [WNC] Fallback: NGAP IE "5G-S-TMSI" is missing, so read the 5G-S-TMSI from NAS IE
+		// "5GS mobile identity" in the Service Request. See useNasIdentityIfNgapSTmsiMissing
+		// in config/amfcfg.yaml.
+		id, idType, err = amf_nas.GetNas5GSMobileIdentity(gmmMessage)
+		ranUe.Log.Warnf("[WNC] Service Request without NGAP IE \"5G-S-TMSI\"; using NAS IE "+
+			"\"5GS mobile identity\" instead [%q:%q, err: %v]", idType, id, err)
 	} else {
 		// Missing NGAP 5G-S-TMSI IE
 		var iesCriticalityDiagnostics ngapType.CriticalityDiagnosticsIEList
