@@ -302,17 +302,23 @@ func CreatePDUSession(ulNasTransport *nasMessage.ULNASTransport,
 
 		smContextRef, errResponse, problemDetail, errSendReq := consumer.GetConsumer().SendCreateSmContextRequest(
 			ue, newSmContext, nil, smMessage)
-		if errSendReq != nil {
+		// #WNC PDU-DROP/REJECT
+		// When the SMF rejects a PDU session, it answers with an HTTP error status (for example 403) and a
+		// body that holds a problem report and the PDU Session Establishment Reject for the UE (TS 29.502).
+		// SendCreateSmContextRequest therefore returns errSendReq, problemDetail and errResponse all set.
+		// The reject check used to come last, so the errSendReq check returned first and the UE never got
+		// the reject. The reject check now comes first, so the AMF forwards the reject to the UE.
+		if n1Reject := smfRejectN1Message(errResponse); n1Reject != nil {
+			ue.GmmLog.Warnf("#WNC PDU-DROP/REJECT PDU Session Establishment Request is rejected by SMF"+
+				"[pduSessionId:%d], forwarding the reject to the UE", pduSessionID)
+			gmm_message.SendDLNASTransport(ue.RanUe[anType], nasMessage.PayloadContainerTypeN1SMInfo,
+				n1Reject, pduSessionID, 0, nil, 0)
+		} else if errSendReq != nil {
 			ue.GmmLog.Errorf("CreateSmContextRequest Error: %+v", errSendReq)
 			return false, nil
 		} else if problemDetail != nil {
 			// TODO: error handling
 			return false, fmt.Errorf("failed to Create smContext[pduSessionID: %d], Error[%v]", pduSessionID, problemDetail)
-		} else if errResponse != nil {
-			ue.GmmLog.Warnf("PDU Session Establishment Request is rejected by SMF[pduSessionId:%d]",
-				pduSessionID)
-			gmm_message.SendDLNASTransport(ue.RanUe[anType], nasMessage.PayloadContainerTypeN1SMInfo,
-				errResponse.BinaryDataN1SmMessage, pduSessionID, 0, nil, 0)
 		} else {
 			newSmContext.SetSmContextRef(smContextRef)
 			newSmContext.SetUserLocation(deepcopy.Copy(ue.Location).(models.UserLocation))
@@ -323,6 +329,17 @@ func CreatePDUSession(ulNasTransport *nasMessage.ULNASTransport,
 		}
 	}
 	return false, nil
+}
+
+// #WNC PDU-DROP/REJECT
+// smfRejectN1Message returns the N1 SM message (the PDU Session Establishment Reject) that the SMF put
+// in its error answer to Create SM Context. It returns nil when the answer is missing or carries no N1
+// message, because an empty DL NAS Transport would give the UE nothing to act on.
+func smfRejectN1Message(errResponse *models.PostSmContextsError) []byte {
+	if errResponse == nil || len(errResponse.BinaryDataN1SmMessage) == 0 {
+		return nil
+	}
+	return errResponse.BinaryDataN1SmMessage
 }
 
 func forward5GSMMessageToSMF(
