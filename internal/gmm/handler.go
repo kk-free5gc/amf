@@ -302,15 +302,22 @@ func CreatePDUSession(ulNasTransport *nasMessage.ULNASTransport,
 
 		smContextRef, errResponse, problemDetail, errSendReq := consumer.GetConsumer().SendCreateSmContextRequest(
 			ue, newSmContext, nil, smMessage)
-		// #WNC PDU-DROP/REJECT
+		// #WNC SMF-REJECT/FORWARD
 		// When the SMF rejects a PDU session, it answers with an HTTP error status (for example 403) and a
 		// body that holds a problem report and the PDU Session Establishment Reject for the UE (TS 29.502).
 		// SendCreateSmContextRequest therefore returns errSendReq, problemDetail and errResponse all set.
 		// The reject check used to come last, so the errSendReq check returned first and the UE never got
 		// the reject. The reject check now comes first, so the AMF forwards the reject to the UE.
+		// The AMF cannot tell why the SMF rejected, so the log prints the 5GSM cause instead of naming a
+		// reason: a PDU drop entry rejects with its rejectCause, and a lost UPF association gives #67.
 		if n1Reject := smfRejectN1Message(errResponse); n1Reject != nil {
-			ue.GmmLog.Warnf("#WNC PDU-DROP/REJECT PDU Session Establishment Request is rejected by SMF"+
-				"[pduSessionId:%d], forwarding the reject to the UE", pduSessionID)
+			if cause, ok := rejectGSMCause(n1Reject); ok {
+				ue.GmmLog.Warnf("#WNC SMF-REJECT/FORWARD SMF rejected PDU Session Establishment Request"+
+					"[pduSessionId:%d] with 5GSM cause #%d, forwarding the reject to the UE", pduSessionID, cause)
+			} else {
+				ue.GmmLog.Warnf("#WNC SMF-REJECT/FORWARD SMF rejected PDU Session Establishment Request"+
+					"[pduSessionId:%d], forwarding its N1 SM message % x to the UE", pduSessionID, n1Reject)
+			}
 			gmm_message.SendDLNASTransport(ue.RanUe[anType], nasMessage.PayloadContainerTypeN1SMInfo,
 				n1Reject, pduSessionID, 0, nil, 0)
 		} else if errSendReq != nil {
@@ -331,7 +338,7 @@ func CreatePDUSession(ulNasTransport *nasMessage.ULNASTransport,
 	return false, nil
 }
 
-// #WNC PDU-DROP/REJECT
+// #WNC SMF-REJECT/FORWARD
 // smfRejectN1Message returns the N1 SM message (the PDU Session Establishment Reject) that the SMF put
 // in its error answer to Create SM Context. It returns nil when the answer is missing or carries no N1
 // message, because an empty DL NAS Transport would give the UE nothing to act on.
@@ -340,6 +347,17 @@ func smfRejectN1Message(errResponse *models.PostSmContextsError) []byte {
 		return nil
 	}
 	return errResponse.BinaryDataN1SmMessage
+}
+
+// #WNC SMF-REJECT/FORWARD
+// rejectGSMCause returns the 5GSM cause of a PDU Session Establishment Reject. TS 24.501 8.3.3.1 puts the
+// cause in octet 5, after the EPD, the PDU session ID, the PTI and the message type. ok is false when the
+// message is too short or is not a PDU Session Establishment Reject.
+func rejectGSMCause(n1 []byte) (cause uint8, ok bool) {
+	if len(n1) < 5 || n1[3] != nas.MsgTypePDUSessionEstablishmentReject {
+		return 0, false
+	}
+	return n1[4], true
 }
 
 func forward5GSMMessageToSMF(
