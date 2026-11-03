@@ -360,6 +360,17 @@ func rejectGSMCause(n1 []byte) (cause uint8, ok bool) {
 	return n1[4], true
 }
 
+// #WNC SMF-REJECT/FORWARD
+// smfUpdateRejectN1Message returns the N1 SM message, such as a PDU Session Release Reject, that the SMF
+// put in its error answer to Update SM Context. It returns nil when the answer is missing or carries no
+// N1 message, because an empty DL NAS Transport would give the UE nothing to act on.
+func smfUpdateRejectN1Message(errResponse *models.UpdateSmContextResponse400) []byte {
+	if errResponse == nil || len(errResponse.BinaryDataN1SmMessage) == 0 {
+		return nil
+	}
+	return errResponse.BinaryDataN1SmMessage
+}
+
 func forward5GSMMessageToSMF(
 	ue *context.AmfUe,
 	accessType models.AccessType,
@@ -384,7 +395,17 @@ func forward5GSMMessageToSMF(
 	response, errResponse, problemDetail, err := consumer.GetConsumer().SendUpdateSmContextRequest(smContext,
 		&smContextUpdateData, smMessage, nil)
 
-	if err != nil {
+	// #WNC SMF-REJECT/FORWARD
+	// When the SMF rejects a 5GSM message, such as a PDU Session Release Request, it answers with an HTTP
+	// error status and a body that holds the reject for the UE. SendUpdateSmContextRequest then returns
+	// err, problemDetail and errResponse all set, so the err check used to return before the reject was
+	// sent. The reject check now comes first, as commit a3caee8 did for Create SM Context.
+	if n1Reject := smfUpdateRejectN1Message(errResponse); n1Reject != nil {
+		ue.GmmLog.Warnf("#WNC SMF-REJECT/FORWARD 5GSM message is rejected by SMF[pduSessionId:%d], "+
+			"forwarding the SMF's N1 message to the UE", pduSessionID)
+		gmm_message.SendDLNASTransport(ue.RanUe[accessType], nasMessage.PayloadContainerTypeN1SMInfo,
+			n1Reject, pduSessionID, 0, nil, 0)
+	} else if err != nil {
 		// TODO: error handling
 		ue.GmmLog.Errorf("Update SMContext error [pduSessionID: %d], Error[%v]", pduSessionID, err)
 		return nil

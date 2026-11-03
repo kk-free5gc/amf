@@ -77,3 +77,49 @@ func TestRejectGSMCause(t *testing.T) {
 		})
 	}
 }
+
+// #WNC SMF-REJECT/FORWARD
+// TestSmfUpdateRejectN1Message checks that the AMF picks the N1 SM message out of the SMF's error answer
+// to Update SM Context, and ignores an answer that carries no N1 message.
+func TestSmfUpdateRejectN1Message(t *testing.T) {
+	// A PDU Session Release Reject as the SMF builds it: EPD 0x2E, PDU session ID 4, PTI 1,
+	// message type 0xD2, 5GSM cause 31 (request rejected, unspecified).
+	reject := []byte{46, 4, 1, 210, 31}
+
+	cases := []struct {
+		name        string
+		errResponse *models.UpdateSmContextResponse400
+		want        []byte
+	}{
+		{name: "no answer", errResponse: nil, want: nil},
+		{name: "answer without N1 message", errResponse: &models.UpdateSmContextResponse400{}, want: nil},
+		{
+			name:        "answer with empty N1 message",
+			errResponse: &models.UpdateSmContextResponse400{BinaryDataN1SmMessage: []byte{}},
+			want:        nil,
+		},
+		{
+			name: "answer with release reject",
+			errResponse: &models.UpdateSmContextResponse400{
+				JsonData:              &models.SmContextUpdateError{},
+				BinaryDataN1SmMessage: reject,
+			},
+			want: reject,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := smfUpdateRejectN1Message(tc.errResponse)
+			if tc.want == nil {
+				if got != nil {
+					t.Fatalf("got %v, want nil", got)
+				}
+				return
+			}
+			if !bytes.Equal(got, tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
